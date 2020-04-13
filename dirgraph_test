@@ -1,0 +1,443 @@
+#!/bin/bash
+
+#nasteveni konzole
+set -u -o pipefail
+	# -o pipefail	 navratova hodnoty pipeline je urcena poslednim prikazem
+	# -u	povazuje nenastavene vychozi hodnoty promennych za chybu
+	# -x	umoznuje sledovani prubehu vykonavani prikazu a jejich tisk na konzoli
+tabs 4
+
+export POSIXLY_CORRECT=YES
+
+count_directories () {		#funkce pro pocitani slozek
+	echo "Predano $# parametru: $@"
+	num=`find "$1" -not -path '*/.*' -type d 2>/dev/null | egrep -v "$2" | wc -l`
+	exit_code=$?
+	printf "Directories: %d\n" $num
+	return $exit_code 
+}
+
+count_files () {	#funkce pro pocitani souboru
+	echo "Predano $# parametru: $@"
+	num=`find "$1" -not -path '*/.*' -type f 2>/dev/null | egrep -v "$2" | wc -l`
+	exit_code=$?
+	printf "All files: %d\n" $num
+	return $exit_code
+}
+
+make_fhist () {
+	echo "Predano $# parametru: $@"
+	file_list=`find "$1" -not -path '*/.*' -type f -print 2>/dev/null | egrep -v "$3"`
+	ret_val=$?     #navratova hodnota posledniho prikazu urcuje navratovy kod dane funkce
+
+		# -not path '...'	ignoruje cesty se skrytymi adresari a soubory
+		# -type f	zameruje se na soubory
+		# -exec ... {} +	provadi nad kazdym vstupem funkci wc(nemuze byt execdir, protoze neuvadi celou cestu vzhledem k aktualnimu adresari
+		# wc -c		vypisuje nad kazdym souborem jeho velikost v bajtech
+		#	v pripade davky souboru vypisuje jeste celkovou velikost
+		# sed '$1' 	textovy editor odstranuje posledni radek s napisem TOTAL (neplati na stroji EVA)
+		#	nemusi byt pouzito pri kombinaci find . -not -path '*/.*' -type f -exec wc -c '{}' \;
+		# gawk '{print $1}' 	vypisuje pouze prvni sloupec vstupu
+
+	
+	typeset -A cn=([lt100]=0 [lt1Ki]=0 [lt10Ki]=0 [lt100Ki]=0 [lt1Mi]=0 [lt10Mi]=0 [lt100Mi]=0 [lt1Gi]=0 [gt1Gi]=0)
+
+	#echo $file_list
+
+	ret_val2=0
+	byte_num=0
+
+	while IFS=$'\n' read -r row
+	do
+		byte_num=`wc -c "$row" | awk '{print $1}'`
+		ret_val2=$?
+
+		if [ $ret_val2 -ne 0 ]
+		then
+			continue
+		fi
+
+		echo "Pocet bajtu: $byte_num"
+
+		if (( $byte_num < 100 ))
+		then
+			cn[lt100]=`expr ${cn[lt100]} + 1`
+
+		elif (( $byte_num >= 100 &&  $byte_num < 1024 ))
+		then
+			cn[lt1Ki]=`expr ${cn[lt1Ki]} + 1`
+
+		elif (( $byte_num >= 1024 &&  $byte_num < 10240 ))
+		then
+			cn[lt10Ki]=`expr ${cn[lt10Ki]} + 1`
+
+		elif (( $byte_num >= 10240 &&  $byte_num < 102400 ))
+		then
+			cn[lt100Ki]=`expr ${cn[lt100Ki]} + 1`
+
+		elif (( $byte_num >= 102400 &&  $byte_num < 1048576 ))
+		then
+			cn[lt1Mi]=`expr ${cn[lt1Mi]} + 1`
+
+		elif (( $byte_num >= 1048576 &&  $byte_num < 10485760 ))
+		then
+			cn[lt10Mi]=`expr ${cn[lt10Mi]} + 1`
+
+		elif (( $byte_num >= 10485760 &&  $byte_num < 104857600 ))
+		then
+			cn[lt100Mi]=`expr ${cn[lt100Mi]} + 1`
+
+		elif (( $byte_num >= 104857600 &&  $byte_num < (1024*1048576) ))
+		then
+			cn[lt1Gi]=`expr ${cn[lt1Gi]} + 1`
+
+		else
+			cn[gt1Gi]=`expr ${cn[gt1Gi]} + 1`
+		fi
+	done <<< "$file_list"
+	
+	echo "Parametry funkce $0: $*"	
+
+	cols=1				#pocet sloupcu
+	catname_length=11			#delka nazvu kategorie
+	norm_on="no"			#rozhodnuti o normalizaci
+
+	if [ "$2" = "-n" ] 	#podminka, zda chci normalizovat graf
+	then
+
+		echo "Normalizace vyzadana uzivatelem..."		
+
+		if [ -t 1 ]		#pokud skript bezi v terminalu
+		then
+			cols=`expr $(tput cols) - 1 - $catname_length`	
+		else		#pokud bezi skript nekde jinde
+			cols=79
+		fi
+
+		echo "Pocet sloupcu: $cols"
+		
+		max=0
+		for idx in ${!cn[@]}		#naleznu maximum
+		do
+			if [ ${cn[$idx]} -gt $max ]; then max=${cn[$idx]}; fi
+		done
+		
+		echo "Max: $max"
+
+		cf=0
+		if [ $max -gt $cols ]; then    	#pokud je max vetsi jak delka radku, zacnu normalizovat
+ 			norm_on="yes"
+			cf=$(echo "scale=5; $cols / $max" | bc)
+		fi
+
+		echo "Koeficinet: $cf"
+		echo "Normalizace zapnuta: $norm_on"
+
+		for idx in "${!cn[@]}"			#normalizuji...
+		do
+			if [ "$norm_on" = "yes" ]
+			then	
+				echo "Kategorie $idx hodnota: ${cn[$idx]}"
+				cn[$idx]=$(echo "scale=5; ${cn[$idx]} * $cf" | bc)
+				b=${cn[$idx]}			#value before rounding
+				echo "Kategorie $idx hodnota PRED zaokrouhlenim: ${cn[$idx]}"
+				cn[$idx]=$(printf "%.0f" "${cn[$idx]}")
+				a=${cn[$idx]}			#value after rounding
+				echo "Kategorie $idx hodnota PO zaokrouhleni: ${cn[$idx]}"
+					
+				res1=$(echo "if($b!=0) 1" | bc -l)	
+				echo "Podminka 1: \"$res1\""
+				res2=$(echo "if($a==0) 1" | bc -l)
+				echo "Podminka 2: \"$res2\""
+
+				if [ "$res1" = "1" -a "$res2" = "1" ]  #zaokrouhlovani na jednicku
+				then
+					echo "Srazim cislo na jednicku..."
+					cn[$idx]=1
+				fi
+				
+				echo "Kategorie $idx konecna hodnota: ${cn[$idx]}"
+				echo
+			
+			else
+				break
+			fi
+		done 
+	fi
+
+	echo "File size histogram:"
+
+	printf "  %s%3s " "<100 B" ":"
+	idx=0
+	while [ $idx -lt ${cn[lt100]} ]; do echo -n "#"; idx=`expr $idx + 1`; done
+	echo
+	echo ${cn[lt100]}
+
+	printf "  %s%3s " "<1 KiB" ":"
+	idx=0
+	while [ $idx -lt ${cn[lt1Ki]} ]; do echo -n "#"; idx=`expr $idx + 1`; done
+	echo
+	echo ${cn[lt1Ki]}
+
+	printf "  %s%2s " "<10 KiB" ":"
+	idx=0
+	while [ $idx -lt ${cn[lt10Ki]} ]; do echo -n "#"; idx=`expr $idx + 1`; done
+	echo	
+	echo ${cn[lt10Ki]}
+
+	printf "  %s%s " "<100 KiB" ":"
+	idx=0
+	while [ $idx -lt ${cn[lt100Ki]} ]; do echo -n "#"; idx=`expr $idx + 1`; done
+	echo
+	echo ${cn[lt100Ki]}
+
+	printf "  %s%3s " "<1 MiB" ":"
+	idx=0
+	while [ $idx -lt ${cn[lt1Mi]} ]; do echo -n "#"; idx=`expr $idx + 1`; done
+	echo
+	echo ${cn[lt1Mi]}
+
+	printf "  %s%2s " "<10 MiB" ":"
+	idx=0
+	while [ $idx -lt ${cn[lt10Mi]} ]; do echo -n "#"; idx=`expr $idx + 1`; done
+	echo
+	echo ${cn[lt10Mi]}
+
+	printf "  %s%s " "<100 MiB" ":"
+	idx=0
+	while [ $idx -lt ${cn[lt100Mi]} ]; do echo -n "#"; idx=`expr $idx + 1`; done
+	echo
+	echo ${cn[lt100Mi]}
+
+	printf "  %s%3s " "<1 GiB" ":"
+	idx=0
+	while [ $idx -lt ${cn[lt1Gi]} ]; do echo -n "#"; idx=`expr $idx + 1`; done
+	echo
+	echo ${cn[lt1Gi]}
+
+	printf "  %s%2s " ">=1 GiB" ":"
+	idx=0
+	while [ $idx -lt ${cn[gt1Gi]} ]; do echo -n "#"; idx=`expr $idx + 1`; done
+	echo
+	echo ${cn[gt1Gi]}
+
+	if [ $ret_val1 -ne 0 -o $ret_val2 -ne 0 ]
+	then
+		return 1        #navratova hodnota cele funkce
+	else
+		return 0
+	fi
+
+}
+
+if [ $# -eq 0 ]		#pripad, kdy nebyl nalezen zadny parametr, skript bere aktualni adresar
+then
+	
+	echo "Nezadan zadny pozicni parametr..."
+
+	echo "Root directory: $PWD"
+	count_directories "$PWD" '!.'
+	echo "Navratovy kod: $?"
+	count_files "$PWD" '!.'
+	echo "Navratovy kod: $?"
+	make_fhist "$PWD" x '!.'
+	echo "Navratovy kod: $?"
+	exit $?
+
+elif [ $# -eq 1 ]	#byl zadan jeden pozicni parametr
+then
+
+	echo "Zadany 1 pozicni parametr"
+
+	if [ "$1" = "-n" ]	#pozicni parametr je prepinac normalizace grafu
+	then
+		echo "Root directory: $PWD"
+		count_directories "$PWD" '!.'
+		echo "Navratovy kod: $?"
+		count_files "$PWD" '!.'
+		echo "Navratovy kod: $?"
+		make_fhist "$PWD" $1 '!.'
+		echo "Navratovy kod: $?"
+		exit $?
+	
+	elif [ -d "$1" ]	#pozicni parametr je nazev adresare
+	then
+		echo "Root directory: $1"
+		count_directories "$1" '!.'
+		echo "Navratovy kod: $?"
+		count_files "$1" '!.'
+		echo "Navratovy kod: $?"
+		make_fhist "$1" x '!.'
+		echo "Navratovy kod: $?"
+		exit $?
+
+	elif [[ "$1" =~ [-*] ]]
+	then
+		echo "Invalid option!" >/dev/stderr 
+		exit 64
+	else
+		echo "$1:Not a name of a directory!" >/dev/stderr 
+		exit 66
+	fi
+
+elif [ $# -eq 2 ]	#zadany dva pozicni parametry
+then
+
+	echo "Zadany 2 pozicni parametry..."
+
+	if [ "$1" = "-i" ]
+	then
+		if [ -n "$2" ]		#test, zda je retezec za prepinacem nenulovy
+		then
+			if [ "$2" = "/" ]		#nesmi pokryvat nazev korenoveho adresare
+			then
+				echo "Ignored-files list should not include a name of the root directory!" >/dev/stderr 
+				exit 64
+			else
+				echo "Root directory: $PWD"
+				count_directories "$PWD" "$2"
+				echo "Navratovy kod: $?"
+				count_files "$PWD" "$2"
+				echo "Navratovy kod: $?"
+				make_fhist "$PWD" x "$2"
+				echo "Navratovy kod: $?"
+				exit $?
+
+			fi
+		else
+			echo "Valid regular expression must follow!" >/dev/stderr 
+			exit 65
+		fi
+
+	elif [ "$1" = "-n" ]
+	then
+		if [ -d "$2" ]		#testovani, zda druhy pozicni parametr je nazev adresare
+		then
+			echo "Root directory: $2"
+			count_directories "$2" '!.'
+			echo "Navratovy kod: $?"
+			count_files "$2" '!.'
+			echo "Navratovy kod: $?"
+			make_fhist "$2" $1 '!.'
+			echo "Navratovy kod: $?"
+			exit $?
+
+		else
+			echo "$2:Not a name of a directory!" >/dev/stderr 
+			exit 66		#66- neexistujici jmeno adresare
+		fi	
+			
+	elif [[ "$1" =~ [-*] ]]
+	then
+		echo "Invalid option!" >/dev/stderr 
+		exit 64
+	else
+		echo "Unrecognized action!" >/dev/stderr 
+		exit 67
+	fi
+elif [ $# -eq 3 ]	#zadany tri pozicni parametry
+then
+
+	echo "Zadany 3 pozicni parametry..."
+
+	if [ "$1" = "-i" ]	
+	then
+		if [ -n "$2" ]		#test, zda je retezec za prepinacem nenulovy
+		then
+			if [ "$2" = "/" ]
+			then
+				echo "Ignored-files list should not include a name of the root directory!" >/dev/stderr 
+				exit 64
+			else
+				if [ "$3" = "-n" ]
+				then
+					echo "Root directory: $PWD"
+					count_directories "$PWD" "$2"
+					echo "Navratovy kod: $?"
+					count_files "$PWD" "$2"
+					echo "Navratovy kod: $?"
+					make_fhist "$PWD" $3 "$2"
+					echo "Navratovy kod: $?"
+					exit $?
+
+				
+				elif [ -d "$3" ]
+				then
+					echo "Root directory: $3"
+					count_directories "$3" "$2"
+					echo "Navratovy kod: $?"
+					count_files "$3" "$2"
+					echo "Navratovy kod: $?"
+					make_fhist "$3" x "$2"
+					echo "Navratovy kod: $?"
+					exit $?
+				else
+					echo "Not a valid parameter!" >/dev/stderr 
+					exit 64		# 64 - spatny parametr
+				fi
+			fi
+		else
+			echo "Valid regular expression must follow!" >/dev/stderr 
+			exit 65			# 65- nepresny nebo nulovy regularni vyraz
+		fi
+	elif [[ "$1" =~ [-*] ]]
+	then
+		echo "Invalid option!" >/dev/stderr 
+		exit 64
+	else
+		echo "Wrong order of parameters, correct form is: dirgraph [-i FILE_ERE] [-n] [DIR]" >/dev/stderr 
+		exit 67
+	fi
+
+elif [ $# -eq 4 ]
+then
+	
+	echo "Zadany 4 pozicni parametry..."
+
+	if [ "$1" = "-i" ]	
+	then
+		if [ -n "$2" ]		#test, zda je retezec za prepinacem nenulovy
+		then	
+			if [ "$2" = "/" ]		#nesmi pokryvat nazev korenoveho adresare
+			then
+				echo "Ignored-files list should not include a name of the root directory!" >/dev/stderr 
+				exit 64
+			else
+				if [ "$3" = "-n" ]
+				then
+					if [ -d "$4" ]
+					then
+							echo "Root directory: $4"
+							count_directories "$4" "$2"
+							echo "Navratovy kod: $?"
+							count_files "$4" "$2"
+							echo "Navratovy kod: $?"
+							make_fhist "$4" $3 "$2"
+							echo "Navratovy kod: $?"
+							exit $?
+					else
+						echo "$4: Not a name of a directory!" >/dev/stderr 
+						exit 66
+					fi
+				else
+					echo "$3: Wrong parameter!"	>/dev/stderr 
+					exit 64
+				fi
+			fi
+		else
+			echo "Valid regular expression must follow!" >/dev/stderr 
+			exit 65
+		fi
+	elif [[ "$1" =~ [-*] ]]
+	then
+		echo "Invalid option!"	>/dev/stderr 
+		exit 64
+	else
+		echo "Wrong order of parameters, correct form is: dirgraph [-i FILE_ERE] [-n] [DIR]" >/dev/stderr 
+		exit 67
+	fi
+else
+	echo "Too much parameters!" >/dev/stderr
+	exit 67
+fi
+exit 1		#dostat se sem je chyba!

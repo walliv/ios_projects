@@ -1,0 +1,19 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+      {
+        "type": "shell",
+        "label": "gcc build active file",
+        "command": "/usr/bin/gcc",
+        "args": [ "-std=gnu99", "-Wall", "-Werror", "-Wextra", "-g", "${workspaceFolder}/projekt2/*.c", "-o", "${workspaceFolder}/projekt2/${fileBasenameNoExtension}"],
+        "options": {
+          "cwd": "/usr/bin"
+        },
+        "problemMatcher": ["$gcc"],
+        "group": {
+          "kind": "build",
+          "isDefault": true
+        }
+      }
+    ]
+  }

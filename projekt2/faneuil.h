@@ -2,28 +2,30 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <time.h>
-#include <unistd.h>         //funkce fork, exec,...
-#include <sys/wait.h>       //funkce waitpid
-#include <semaphore.h>      //datovy typ sem
+#include <unistd.h>         //functions fork, exec,...
+#include <sys/wait.h>       //waitpid function
+#include <semaphore.h>      //sem_t data type
 
 /* Deklarace pametove struktury */
 struct Mem_Struct {
-    sem_t sem_judge_inside;
-    sem_t sem_general_process;
-    sem_t sem_imm_starts;
-    sem_t sem_confirmation;
 
-    int process_count;      //pocet procesu immigrant, ktere budou vygenerovany
-    int borders[4];         //casove limity pro uspavani procesu
+    FILE* fi;           //open file pointer
 
-    int acc_ord;            //volne cislo dalsi akce, inc 1
-    int imm_ord;            //volne cislo pro dalsiho migranta, inc 1
-    int imm_enter;          //pocet pristehovalcu, o kterych nebylo rozhodnuto, inc 0
-    int imm_registered;     //pocet pristehovalcu, kteri se registrovali, inc 0
-    int imm_inside;         //celkovy pocet pristehovalcu v budove, inc 0
+    sem_t sem_judge_inside;         //indicates if judge is inside a building
+    sem_t sem_general_process;      //provides restrictions when multiple processes attempt to access a common source
+    sem_t sem_imm_starts;           //causes judge to wait till at least one immigrant had started and entered the building
+    sem_t sem_confirmation;         //indicates if confiramtion has ended and immigrants can start to pick ther certificates
 
-    int imm_done;
+    int process_count;      //number of immigrant processes which shall be generated
+    int borders[4];         //time paramters for sleep functions
+
+    int acc_ord;            //number of last action
+    int imm_ord;            //number of the last immigrant
+    int imm_enter;          //number if imm. which enterd the building
+    int imm_registered;     //number of imm. who have had entered building and registered themselves
+    int imm_inside;         //amount of all imm. in the building
+
+    int imm_done;           //amount of imm. which already have picked the certificate
 };
 
 

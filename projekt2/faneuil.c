@@ -213,8 +213,6 @@ void immigrant_proc (struct Mem_Struct *mem_block) {
 
     int imm_num = 0;            //immigrant identifier
     srand(getpid());    
-    
-    sem_post(&mem_block->sem_imm_starts);
 
     sem_wait(&mem_block->sem_general_process);
 
@@ -248,6 +246,8 @@ void immigrant_proc (struct Mem_Struct *mem_block) {
         fflush(mem_block->fi);
 
     sem_post(&mem_block->sem_general_process);
+
+    sem_post(&mem_block->sem_imm_starts);
 
     //this have to happen after judge finished confirmation
     sem_wait(&mem_block->sem_confirmation);

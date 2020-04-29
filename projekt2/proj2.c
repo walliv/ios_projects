@@ -6,13 +6,12 @@
 #include <errno.h>
 #include <string.h>
 
-#define TEST        //pro testovaci ucely odkomentovat
-
-//#define MMAN
-//#define MALLOC
+//#define TEST        //pro testovaci ucely odkomentovat
+//#define PROCESS_CREATION
 
 int main (int argc, char *argv[])
 {
+    /*-------------------------UVODNI TESTY---------------------*/
     #ifdef TEST
         printf("Pocet parametru: %d\n", argc);
 
@@ -35,7 +34,7 @@ int main (int argc, char *argv[])
         int pcess_count = atoi(argv[1]);
 
         if (pcess_count < 1) {                   //prvni parametr ma jinou podminku
-            fprintf (stderr, " 1st parameter out of range, value must be greater than 1 or equal!\n");
+            fprintf (stderr, "1st parameter out of range, value must be greater than 1 or equal!\n");
             exit(1);
         }
 
@@ -65,7 +64,7 @@ int main (int argc, char *argv[])
             printf("Uvodni testy uspely, pokracuji v kodu...\n");
         #endif
 
-        /* Alokace sdilene pameti */
+        /*-------------------------------Alokace sdilene pameti--------------------------------*/
 
         int shm_id = shmget(IPC_PRIVATE, sizeof(struct Mem_Struct), 0666 | IPC_CREAT);
 
@@ -90,20 +89,18 @@ int main (int argc, char *argv[])
         #ifdef TEST
             printf("Sdilena pamet pripojena\n");
         #endif
-        /*
-        mem_block->sem_judge_inside = sem_open("/semtex", O_EXCL | O_CREAT, 0666, 1);
-        mem_block->sem_general_process = sem_open("/crazy", O_EXCL | O_CREAT, 0666, 1);
-        mem_block->sem_judge_finish = sem_open("/monster", O_EXCL | O_CREAT, 0666, ((-pcess_count) + 2));
-        mem_block->sem_confirmation = sem_open("/boost", O_EXCL | O_CREAT, 0666, 0);
-        */
 
-        int ret1 = sem_init(&mem_block->sem_judge_inside, 1, 1);
-        int ret2 = sem_init(&mem_block->sem_judge_finish, 1, ((-pcess_count) + 2));
-        int ret3 = sem_init(&mem_block->sem_general_process, 1, 1);
-        int ret4 = sem_init(&mem_block->sem_confirmation, 1, 0);
+        /*-------------------------INICIALIZACE NEPOJMENOVANYCH SEMAFORU--------------------------*/
+        
+       //[TODO]: osetrit lepe podminky vzniku semaforu
+
+        int ret1 = sem_init(&mem_block->sem_judge_inside, 1, 1);            //MUTEX
+        int ret2 = sem_init(&mem_block->sem_imm_starts, 1, 0);            //SIGNAL
+        int ret3 = sem_init(&mem_block->sem_general_process, 1, 1);         //MUTEX
+        int ret4 = sem_init(&mem_block->sem_confirmation, 1, 0);            //SIGNAL
 
         //if(mem_block->sem_judge_inside == SEM_FAILED || mem_block->sem_general_process == SEM_FAILED ||
-        //mem_block->sem_judge_finish == SEM_FAILED || mem_block->sem_confirmation == SEM_FAILED){  
+        //mem_block->sem_imm_starts == SEM_FAILED || mem_block->sem_confirmation == SEM_FAILED){  
         if(ret1 == -1 || ret2 == -1 || ret3 == -1 || ret4 == -1) {            //v pripade, ze selze vytvoreni semaforu
             //fprintf( stderr, "Failed to create semaphore! Error: %s\n", strerror(errno));
             perror("sem_init");
@@ -111,8 +108,10 @@ int main (int argc, char *argv[])
         }
 
         #ifdef TEST
-            printf("Semafor inicializovan...\n");
+            printf("Semafory inicializovany...\n");
         #endif
+
+        mem_block->process_count = pcess_count;
 
         for(int i = 0; i < 4; i++)
             mem_block->borders[i] = borders[i];
@@ -122,11 +121,11 @@ int main (int argc, char *argv[])
         mem_block->imm_enter = 0;
         mem_block->imm_registered = 0;
         mem_block->imm_inside = 0;
+        mem_block->imm_done = 0;
 
         #ifdef TEST
             printf("Promenne hlavni struktury inicializovany\n");
         #endif
-
 
         #ifdef TEST
             printf("Alokace shmget, shmat:\n");
@@ -137,35 +136,7 @@ int main (int argc, char *argv[])
             mem_block->acc_ord, mem_block->imm_ord, mem_block->imm_enter, mem_block->imm_registered, mem_block->imm_inside);
         #endif    
 
-        #ifdef MMAN     //tohle nefunguje, chybi funkce ftruncate a shm_open
-            struct Mem_Struct *mem_block = (struct Mem_Struct*)mmap(NULL, sizeof(struct Mem_Struct), (PROT_READ | PROT_WRITE), MAP_SHARED, -1, 0);
-
-            memcpy(mem_block, (void *) mem, sizeof(struct Mem_Struct));
-
-            if(mem_block == MAP_FAILED) {           //pro pripad, ze by alokace
-                fprintf( stderr, "Shared memory allocation failed, using mmap.\n");
-                exit(1);
-            }
-
-            for(int i = 0; i < 5; i++)
-                mem_block->borders[i] = borders[i];
-
-            mem_block->acc_ord = 1;
-            mem_block->imm_ord = 1;
-            mem_block->imm_enter = 0;
-            mem_block->imm_registered = 0;
-            mem_block-> imm_inside = 0;
-
-            #ifdef TEST
-                printf("Alokace mmap:\n");
-                printf("Promenne borders:");
-                for (int i = 0; i < 5; i++)
-                    printf("%d: %d;", i, mem_block->borders[i]);  
-
-                printf("\nPromenne: acc_ord = %d, imm_ord = %d, imm_enter = %d, imm_registered = %d, imm_inside = %d\n", 
-                mem_block->acc_ord, mem_block->imm_ord, mem_block->imm_enter, mem_block->imm_registered, mem_block->imm_inside);
-            #endif    
-        #endif
+        /*----------------------POCATEK INICIALIZACE PROCESU-----------------------*/
 
         int status;         //informace o statusu ukonceni daneho potomka
         pid_t judge_pid, gen_pid;
@@ -174,36 +145,40 @@ int main (int argc, char *argv[])
         
         if (judge_pid == 0) {         //proces potomka = proces soudce
 
-            #ifdef TEST
+            #ifdef PROCESS_CREATION
                 printf("Proces soudce s PID: %d a PPID: %d\n", getpid(), getppid());
             #endif
 
-            //while(mem_block->imm_ord <= pcess_count)    //pokud nebylo o vsech rozhodnuto, spoustim soudce znovu
-                judge_proc(mem_block);
-
+            judge_proc(mem_block, 0, 0);
             exit (EXIT_FAILURE);           //zde to musi koncit exit, protoze jinak by se proces stal sam sobe rodicem
-        } else if (judge_pid < 0) {        //fork selhal
+       
+       } else if (judge_pid < 0) {        //fork selhal
+            
             fprintf( stderr, "Fork failed!\n");
             exit(EXIT_FAILURE);
+
         } else {         //proces rodice = hlavni proces tohoto programu, navratova hodnota fork je PID potomka
 
             gen_pid = fork();
             if(gen_pid == 0) {          //zde vytvorim generator pristehovalcu
 
-                #ifdef TEST
+                #ifdef PROCESS_CREATION
                     printf("Proces generovani migrantu(funkce main) s PID: %d a PPID: %d\n", getpid(), getppid());
                 #endif
 
                 generate_immigrants(mem_block, pcess_count);
                 exit (EXIT_FAILURE);
+            
             } else if (gen_pid < 0) {
+
                 fprintf( stderr, "Fork failed!\n");
                 exit(EXIT_FAILURE);             //tohle ukonci proces a vsechno vycisti
+            
             } else {        //rodicovsky proces = hlavni proces tototo programu
                 
                 //[TODO]: zde pokracovat, prace rodice pri dokonceni procesu generatoru
 
-                #ifdef TEST
+                #ifdef PROCESS_CREATION
                     printf("Hlavni proces programu s PID: %d a PPID: %d\n", getpid(), getppid());
                 #endif
 
@@ -216,7 +191,7 @@ int main (int argc, char *argv[])
                 
             //[TODO]: zde pokracovat, prace rodice pri dokonceni procesu soudce
 
-            #ifdef TEST
+            #ifdef PROCESS_CREATION
                 printf("Hlavni proces programu s PID: %d a PPID: %d\n", getpid(), getppid());
             #endif
 
@@ -228,44 +203,51 @@ int main (int argc, char *argv[])
 
     /* Zaverecne uklizeci prace */
 
-    if(sem_destroy(&mem_block->sem_judge_inside) == -1 || sem_destroy(&mem_block->sem_judge_finish) == -1 || 
+    #ifdef TEST
+        printf("Vsechny procesy skonceny uspesne\n");
+    #endif
+
+    if(sem_destroy(&mem_block->sem_judge_inside) == -1 || sem_destroy(&mem_block->sem_imm_starts) == -1 || 
     sem_destroy(&mem_block->sem_confirmation) == -1 || sem_destroy(&mem_block->sem_general_process) == -1) {
+        
         perror("sem_destroy");
         exit(1);
+
     }
 
-    /*
-    if(sem_close(mem_block->sem_judge_inside) == -1 || sem_close(mem_block->sem_general_process) == -1 || 
-    sem_close(mem_block->sem_judge_finish) == -1 || sem_close(mem_block->sem_confirmation) == -1) {
-        fprintf( stderr, "Failed to close semaphore!\n");
-        exit(EXIT_FAILURE);
-    }
-
-     if(sem_unlink("midori") == -1 || sem_unlink("falkon") == -1 || sem_unlink("chrome") == -1 || 
-     sem_unlink("firefox") == -1) {
-        fprintf( stderr, "Failed to remove semaphore!\n");
-        exit(EXIT_FAILURE);
-    }
-    */
+    #ifdef TEST
+        printf("Semafory zniceny...\n");
+    #endif
 
     if (shmdt(mem_block) == -1) {
+
         fprintf( stderr, "Failed to detach memory segment!\n");
         exit(EXIT_FAILURE);
+
     }
+
+    #ifdef TEST
+        printf("Sdilena pamet odpojena...\n");
+    #endif
 
     if (shmctl(shm_id, IPC_RMID, NULL) == -1) {
+
         fprintf( stderr, "Failed to remove memory segment!\n");
         exit(EXIT_FAILURE);
+
     }
     
-
-    //[TODO]: zde jeste chybi volani funkce shmctl pro smazani bloku sdilene pameti
+    #ifdef TEST
+        printf("Sdilena pamet odstranena!\n");
+    #endif
      
 
     } else {
+
         fprintf( stderr, "Wrong number of parameters, 5 expected!\n");     //zde musi byt fprintf protoze tisknu do souboru
         exit(EXIT_FAILURE);
+
     }
     
     return 0;       //sem se program nesmi dostat
-}
+}  

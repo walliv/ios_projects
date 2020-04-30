@@ -53,10 +53,10 @@ debug : $(TARGET)
 	@export EDITOR=vim
 	@gdb $<
 
-#Rule for making the archive
-archive : $(TARGET) clean
-	@echo -e "Packing \t$< --> $<.zip"
-	@zip $<.zip $(ALLFILES)
+#Rule for making the archive#@echo -e "Packing \t$< --> $<.zip"
+archive : clean
+	@echo -e "Packing files..."
+	@zip $(TARGET).zip $(ALLFILES)
 
 # Clean rule
 clean :
